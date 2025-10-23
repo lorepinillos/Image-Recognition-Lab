@@ -1,55 +1,43 @@
-import json
-import boto3
-import os
-import uuid
+import json, boto3, os, uuid
 from botocore.exceptions import ClientError
 
-# Initialize the S3
-s3_client = boto3.client('s3')
+s3 = boto3.client('s3')
+
+CORS = {
+    "Access-Control-Allow-Origin": "https://lorepinillos.github.io",
+    "Access-Control-Allow-Headers": "Content-Type,x-api-key",
+    "Access-Control-Allow-Methods": "OPTIONS,POST"
+}
+
+def resp(code, body):
+    return {"statusCode": code, "headers": CORS, "body": json.dumps(body)}
 
 def lambda_handler(event, context):
-    """
-    Generates a pre-signed URL for uploading a file to an S3 bucket
-    """
     try:
-        # Get the bucket name from an environment variable
-        bucket_name = os.environ.get('UPLOAD_BUCKET_NAME')
-        if not bucket_name:
-            raise ValueError("UPLOAD_BUCKET_NAME environment variable not set")
+        if event.get("httpMethod") == "OPTIONS":
+            return resp(200, {})  # preflight
+
+        bucket = os.environ.get('UPLOAD_BUCKET_NAME')
+        if not bucket:
+            return resp(500, {"error": "UPLOAD_BUCKET_NAME not set"})
 
         body = json.loads(event.get('body', '{}'))
         file_name = body.get('fileName')
-        
+        content_type = body.get('contentType') or "image/jpeg"  # default
+
         if not file_name:
-            return {
-                'statusCode': 400,
-                'body': json.dumps({'error': 'fileName is required'}),
-                'headers': {}
-            }
+            return resp(400, {"error": "fileName is required"})
 
-        # Generate a unique key for the S3 object to prevent overwrites
-        object_key = f"uploads/{uuid.uuid4()}-{file_name}"
+        key = f"uploads/{uuid.uuid4()}-{file_name}"
 
-        # Generate the pre-signed URL
-        presigned_url = s3_client.generate_presigned_url(
+        url = s3.generate_presigned_url(
             'put_object',
-            Params={'Bucket': bucket_name, 'Key': object_key, 'ContentType': 'image/jpeg'},
-            ExpiresIn=3600  # URL expires in 1 hour
+            Params={'Bucket': bucket, 'Key': key, 'ContentType': content_type},
+            ExpiresIn=3600
         )
 
-        return {
-            'statusCode': 200,
-            'body': json.dumps({
-                'uploadURL': presigned_url,
-                'key': object_key
-            }),
-            'headers': {}
-        }
+        return resp(200, {"uploadURL": url, "key": key, "contentType": content_type})
 
     except (ClientError, ValueError) as e:
-        print(f"Error: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': str(e)}),
-            'headers': {}
-        }
+        print("Presign error:", e)
+        return resp(500, {"error": str(e)})
