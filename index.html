@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS Rekognition Lab</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .loader {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        /* Custom styles for better UI feedback */
+        .drop-zone {
+            transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+        }
+        .drop-zone-over {
+            background-color: #e0f2fe;
+            border-color: #0284c7;
+        }
+    </style>
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-2xl p-8 m-4">
+        
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Image Recognition Lab </h1>
+            <p class="text-gray-500 mt-2">by: Laura Rodriguez & Lorena Pinillos </p>
+            <p class="text-gray-500 mt-2">Upload an image to analyze it with AWS Rekognition</p>
+        </div>
+
+        <div id="uploadContainer">
+            <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer">
+                <input type="file" id="imageFile" accept="image/jpeg" class="hidden">
+                <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <p class="mt-2 text-sm text-gray-600">
+                    <span class="font-semibold text-indigo-600">Click to upload</span> or drag and drop
+                </p>
+                <p class="text-xs text-gray-500">JPG up to 10MB</p>
+            </div>
+             <p id="fileName" class="text-center text-sm text-gray-500 mt-2"></p>
+        </div>
+        
+        <div class="mt-6 text-center">
+            <button id="analyzeBtn" class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg shadow-md hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all" disabled>
+                Analyze Image
+            </button>
+        </div>
+        
+        <div id="resultsContainer" class="mt-8 hidden">
+             <div class="flex items-center justify-between pb-4 border-b">
+                <h2 class="text-2xl font-bold text-gray-800">Analysis Results</h2>
+                <button id="resetBtn" class="text-sm text-indigo-600 hover:text-indigo-800 font-semibold">Start Over</button>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 items-start">
+                <div>
+                    <h3 class="font-semibold text-gray-700 mb-2">Your Image:</h3>
+                    <img id="imagePreview" src="#" alt="Image preview" class="rounded-lg shadow-md w-full object-cover">
+                </div>
+
+                <div>
+                     <h3 class="font-semibold text-gray-700 mb-2">Detected Labels:</h3>
+                     <div id="loader" class="flex items-center justify-center py-8 hidden">
+                        <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div>
+                        <p class="ml-4 text-gray-600">Analyzing...</p>
+                    </div>
+                    <div id="labels" class="space-y-2">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="statusMessage" class="mt-4 text-center text-sm"></div>
+
+    </div>
+
+    <script>
+        const API_ENDPOINT = "https://4eqjtumd8h.execute-api.us-east-1.amazonaws.com"
+        const BUCKET_NAME = "rekognition-lab-images-lpb-lro"; 
+        
+        const imageFileInput = document.getElementById('imageFile');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const imagePreview = document.getElementById('imagePreview');
+        const labelsContainer = document.getElementById('labels');
+        const loader = document.getElementById('loader');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const uploadContainer = document.getElementById('uploadContainer');
+        const statusMessage = document.getElementById('statusMessage');
+        const resetBtn = document.getElementById('resetBtn');
+        const dropZone = document.getElementById('dropZone');
+        const fileNameDisplay = document.getElementById('fileName');
+
+
+        let selectedFile = null;
+
+        dropZone.addEventListener('click', () => imageFileInput.click());
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drop-zone-over');
+        });
+
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drop-zone-over');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drop-zone-over');
+            const files = e.dataTransfer.files;
+            if (files.length) {
+                handleFileSelect(files[0]);
+            }
+        });
+
+        imageFileInput.addEventListener('change', (event) => {
+            if (event.target.files.length > 0) {
+                handleFileSelect(event.target.files[0]);
+            }
+        });
+
+        analyzeBtn.addEventListener('click', analyzeImage);
+        resetBtn.addEventListener('click', resetUI);
+        
+        function handleFileSelect(file) {
+            selectedFile = file;
+            fileNameDisplay.textContent = selectedFile.name;
+            analyzeBtn.disabled = false;
+            statusMessage.textContent = '';
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                imagePreview.src = e.target.result;
+            }
+            reader.readAsDataURL(selectedFile);
+        }
+
+        async function analyzeImage() {
+            if (!selectedFile) {
+                setStatus('Please select an image first.', true);
+                return;
+            }
+            if (!API_ENDPOINT.includes('amazonaws.com') || BUCKET_NAME.startsWith('YOUR_')) {
+                 setStatus('Error: API_ENDPOINT or BUCKET_NAME not configured in index.html.', true);
+                 return;
+            }
+
+            setLoading(true);
+            uploadContainer.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
+
+            try {
+                setStatus('Getting secure upload link...');
+                const presignedUrlResponse = await fetch(`${API_ENDPOINT}/generate-url`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Access-Control-Request-Method': 'POST' },
+                    body: JSON.stringify({ fileName: selectedFile.name })
+                });
+
+                if (!presignedUrlResponse.ok) throw new Error('Could not get pre-signed URL.');
+                
+                const { uploadURL, key } = await presignedUrlResponse.json();
+
+                setStatus('Uploading image...');
+                const uploadResponse = await fetch(uploadURL, {
+                    method: 'PUT',
+                    body: selectedFile
+                });
+
+                if (!uploadResponse.ok) throw new Error('Image upload to S3 failed.');
+
+                setStatus('Analyzing image with Rekognition...');
+                const rekognitionResponse = await fetch(`${API_ENDPOINT}/detect-labels`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bucket: BUCKET_NAME,
+                        key: key
+                    })
+                });
+
+                if (!rekognitionResponse.ok) throw new Error('Rekognition analysis failed.');
+
+                const labels = await rekognitionResponse.json();
+                
+                // 4. Display the results
+                displayLabels(labels);
+                setStatus('');
+
+            } catch (error) {
+                console.error('Analysis failed:', error);
+                setStatus(`Error: ${error.message}`, true);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        
+        function displayLabels(labels) {
+            labelsContainer.innerHTML = '';
+            if (labels.length === 0) {
+                 labelsContainer.innerHTML = `<p class="text-gray-500">No labels detected with high confidence.</p>`;
+                 return;
+            }
+
+            labels.forEach(label => {
+                const confidence = label.Confidence.toFixed(2);
+                const labelElement = document.createElement('div');
+                labelElement.className = 'flex justify-between items-center bg-gray-50 p-3 rounded-lg';
+                labelElement.innerHTML = `
+                    <span class="text-gray-800 font-medium">${label.Name}</span>
+                    <span class="text-sm font-semibold text-indigo-600 bg-indigo-100 px-2 py-1 rounded-full">${confidence}%</span>
+                `;
+                labelsContainer.appendChild(labelElement);
+            });
+        }
+
+        function setLoading(isLoading) {
+            analyzeBtn.disabled = isLoading;
+            if (isLoading) {
+                loader.classList.remove('hidden');
+                labelsContainer.classList.add('hidden');
+            } else {
+                loader.classList.add('hidden');
+                labelsContainer.classList.remove('hidden');
+            }
+        }
+
+        function setStatus(message, isError = false) {
+            statusMessage.textContent = message;
+            statusMessage.className = `mt-4 text-center text-sm ${isError ? 'text-red-600' : 'text-gray-600'}`;
+        }
+
+        function resetUI() {
+            selectedFile = null;
+            imageFileInput.value = '';
+            analyzeBtn.disabled = true;
+            
+            uploadContainer.classList.remove('hidden');
+            resultsContainer.classList.add('hidden');
+            labelsContainer.innerHTML = '';
+            imagePreview.src = '#';
+            fileNameDisplay.textContent = '';
+            setStatus('');
+        }
+    </script>
+
+</body>
+</html>
